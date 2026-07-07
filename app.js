@@ -6,12 +6,19 @@ const ENDPOINT = (model, key) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
 const COLOR_PRESETS = [
-  { label: "赤", color: "#e23b3b", prompt: "対象の主役となる物の色を鮮やかな赤に変えてください。" },
-  { label: "青", color: "#3b7de2", prompt: "対象の主役となる物の色を鮮やかな青に変えてください。" },
-  { label: "緑", color: "#3bbf5a", prompt: "対象の主役となる物の色を鮮やかな緑に変えてください。" },
-  { label: "黄", color: "#e8c93b", prompt: "対象の主役となる物の色を明るい黄色に変えてください。" },
-  { label: "紫", color: "#9b3be2", prompt: "対象の主役となる物の色を紫に変えてください。" },
-  { label: "ピンク", color: "#e23b9b", prompt: "対象の主役となる物の色をピンクに変えてください。" },
+  // --- 物の色を変える ---
+  { label: "物→赤", color: "#e23b3b", prompt: "対象の主役となる物の色を鮮やかな赤に変えてください。" },
+  { label: "物→青", color: "#3b7de2", prompt: "対象の主役となる物の色を鮮やかな青に変えてください。" },
+  { label: "物→緑", color: "#3bbf5a", prompt: "対象の主役となる物の色を鮮やかな緑に変えてください。" },
+  { label: "物→黄", color: "#e8c93b", prompt: "対象の主役となる物の色を明るい黄色に変えてください。" },
+  // --- 服の色を変える（人物向け）---
+  { label: "服→赤", color: "#e23b3b", prompt: "写っている人物が着ている服（衣服）の色だけを鮮やかな赤に変えてください。" },
+  { label: "服→青", color: "#3b7de2", prompt: "写っている人物が着ている服（衣服）の色だけを鮮やかな青に変えてください。" },
+  { label: "服→緑", color: "#3bbf5a", prompt: "写っている人物が着ている服（衣服）の色だけを深い緑に変えてください。" },
+  { label: "服→黒", color: "#333333", prompt: "写っている人物が着ている服（衣服）の色だけを黒に変えてください。" },
+  { label: "服→白", color: "#dddddd", prompt: "写っている人物が着ている服（衣服）の色だけを白に変えてください。" },
+  { label: "服→ピンク", color: "#e23b9b", prompt: "写っている人物が着ている服（衣服）の色だけをパステルピンクに変えてください。" },
+  // --- その他 ---
   { label: "モノクロ", color: "#888888", prompt: "画像全体をモノクロ（白黒）にしてください。" },
 ];
 
@@ -123,7 +130,9 @@ async function convert() {
 
   const instruction =
     `${userPrompt} ` +
-    "形・構図・背景・質感は保ったまま、色だけを自然に変更した画像を生成してください。";
+    "形・構図・背景・質感は保ったまま、指定された対象の色だけを自然に変更した画像を生成してください。" +
+    "人物が写っている場合は、顔・肌の色・髪・体型・ポーズ・アクセサリー・背景は一切変えず、本人だと分かるように保ってください。" +
+    "服のシワや陰影も自然に残してください。";
 
   convertBtn.disabled = true;
   showStatus("loading", "Gemini が変換中…（数秒〜十数秒）", true);
@@ -136,25 +145,43 @@ async function convert() {
       ],
     }],
     generationConfig: { responseModalities: ["IMAGE"] },
+    // 正当な服の色替え等が過剰にブロックされるのを緩和（調整可能なカテゴリのみ）
+    safetySettings: [
+      { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+      { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+      { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+      { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
+    ],
   };
 
   try {
-    const res = await fetch(ENDPOINT(MODEL, key), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    // 安全フィルタのブロックは確率的なので、画像が返るまで最大2回試行
+    const MAX_TRIES = 2;
+    let outImage = null;
+    let lastData = null;
 
-    const data = await res.json();
+    for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+      if (attempt > 1) showStatus("loading", `もう一度試しています…（${attempt}/${MAX_TRIES}）`, true);
 
-    if (!res.ok) {
-      const msg = (data && data.error && data.error.message) || `HTTP ${res.status}`;
-      throw new Error(msg);
+      const res = await fetch(ENDPOINT(MODEL, key), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      lastData = data;
+
+      if (!res.ok) {
+        const msg = (data && data.error && data.error.message) || `HTTP ${res.status}`;
+        throw new Error(msg); // キー/課金/リクエスト不正はリトライしても無意味
+      }
+
+      outImage = extractImage(data);
+      if (outImage) break;
     }
 
-    const outImage = extractImage(data);
     if (!outImage) {
-      throw new Error("画像が返りませんでした。" + diagnose(data));
+      throw new Error("画像が返りませんでした。" + diagnose(lastData));
     }
 
     const outUrl = `data:${outImage.mimeType};base64,${outImage.data}`;
