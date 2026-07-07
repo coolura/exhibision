@@ -76,19 +76,40 @@ function onFileSelected(e) {
 
   const reader = new FileReader();
   reader.onload = () => {
-    const dataUrl = reader.result;
-    const base64 = String(dataUrl).split(",")[1];
-    selectedFile = { mimeType: file.type || "image/jpeg", base64, dataUrl };
+    const originalUrl = reader.result;
+    // 送信前に最大1280pxへ縮小（大きな写真での失敗・遅延を防ぐ）
+    downscale(originalUrl, 1280, (jpegDataUrl) => {
+      const base64 = jpegDataUrl.split(",")[1];
+      selectedFile = { mimeType: "image/jpeg", base64, dataUrl: jpegDataUrl };
 
-    beforeImg.src = dataUrl;
-    resultCard.hidden = false;
-    afterImg.hidden = true;
-    afterPlaceholder.hidden = false;
-    downloadLink.hidden = true;
-    convertBtn.disabled = false;
-    hideStatus();
+      beforeImg.src = jpegDataUrl;
+      resultCard.hidden = false;
+      afterImg.hidden = true;
+      afterPlaceholder.hidden = false;
+      downloadLink.hidden = true;
+      convertBtn.disabled = false;
+      hideStatus();
+    });
   };
   reader.readAsDataURL(file);
+}
+
+// 画像を長辺 maxPx 以内に縮小して JPEG(dataURL) を返す
+function downscale(srcDataUrl, maxPx, cb) {
+  const img = new Image();
+  img.onload = () => {
+    let { width, height } = img;
+    const scale = Math.min(1, maxPx / Math.max(width, height));
+    width = Math.round(width * scale);
+    height = Math.round(height * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+    cb(canvas.toDataURL("image/jpeg", 0.9));
+  };
+  img.onerror = () => cb(srcDataUrl); // 失敗時は元画像のまま
+  img.src = srcDataUrl;
 }
 
 // ===== 変換 =====
@@ -133,10 +154,7 @@ async function convert() {
 
     const outImage = extractImage(data);
     if (!outImage) {
-      const textOut = extractText(data);
-      throw new Error(
-        "画像が返りませんでした。" + (textOut ? `モデルの応答: ${textOut}` : "モデル名や課金設定を確認してください。")
-      );
+      throw new Error("画像が返りませんでした。" + diagnose(data));
     }
 
     const outUrl = `data:${outImage.mimeType};base64,${outImage.data}`;
@@ -168,6 +186,27 @@ function extractImage(data) {
 function extractText(data) {
   const parts = data?.candidates?.[0]?.content?.parts || [];
   return parts.map((p) => p.text).filter(Boolean).join(" ");
+}
+
+// 画像が返らなかった理由を人間向けに説明する
+function diagnose(data) {
+  const cand = data?.candidates?.[0];
+  const finish = cand?.finishReason;
+  const block = data?.promptFeedback?.blockReason;
+  const textOut = extractText(data);
+
+  // 安全フィルタ系のブロック
+  const safety = ["SAFETY", "IMAGE_SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "RECITATION"];
+  if (block || (finish && safety.includes(finish))) {
+    return (
+      "安全フィルタでブロックされた可能性があります（理由: " + (block || finish) + "）。" +
+      "人物・顔・実在の人などが写っていると弾かれることがあります。別の写真（物・風景など）でお試しください。"
+    );
+  }
+  if (textOut) return "モデルの応答: " + textOut;
+  if (finish) return "終了理由: " + finish + "。別の写真やプロンプトでお試しください。";
+  if (!cand) return "応答に候補がありませんでした。別の写真でお試しください。";
+  return "別の写真やプロンプトでお試しください。";
 }
 
 // ===== ステータス表示 =====
