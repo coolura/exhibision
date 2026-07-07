@@ -44,9 +44,32 @@
 
     <!-- 3. 変換内容 -->
     <section class="card">
-      <h2>3. どんな色に変える？</h2>
-      <div class="color-presets" id="presets"></div>
-      <input type="text" id="prompt" placeholder="例: 車のボディを鮮やかな赤にして" />
+      <h2>3. 何を・何色に変える？</h2>
+
+      <div class="field">
+        <span class="field-label">対象</span>
+        <div class="segmented" id="targetSeg">
+          <button type="button" class="seg active" data-target="item">物</button>
+          <button type="button" class="seg" data-target="clothes">服</button>
+          <button type="button" class="seg" data-target="pattern">柄はそのまま</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="field-label">色を指定（カラーコード）</span>
+        <div class="color-pick">
+          <input type="color" id="colorPicker" value="#3b7de2" aria-label="色を選ぶ" />
+          <input type="text" id="hexInput" value="#3B7DE2" maxlength="7" spellcheck="false" aria-label="カラーコード" />
+          <span class="rgb" id="rgbLabel">RGB 59,125,226</span>
+        </div>
+        <div class="swatches" id="swatches"></div>
+      </div>
+
+      <div class="field">
+        <span class="field-label">指示文（自動生成・編集可）</span>
+        <input type="text" id="prompt" placeholder="対象と色を選ぶと自動で入ります" />
+      </div>
+
       <button id="convert" class="btn btn-primary btn-block" disabled>✨ 変換する</button>
     </section>
 

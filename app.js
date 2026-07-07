@@ -5,35 +5,39 @@ const MODEL = "gemini-2.5-flash-image";
 const ENDPOINT = (model, key) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
-const COLOR_PRESETS = [
-  // --- 物の色を変える ---
-  { label: "物→赤", color: "#e23b3b", prompt: "対象の主役となる物の色を鮮やかな赤に変えてください。" },
-  { label: "物→青", color: "#3b7de2", prompt: "対象の主役となる物の色を鮮やかな青に変えてください。" },
-  { label: "物→緑", color: "#3bbf5a", prompt: "対象の主役となる物の色を鮮やかな緑に変えてください。" },
-  { label: "物→黄", color: "#e8c93b", prompt: "対象の主役となる物の色を明るい黄色に変えてください。" },
-  // --- 服の色を変える（人物向け）---
-  { label: "服→赤", color: "#e23b3b", prompt: "写っている人物が着ている服（衣服）の色だけを鮮やかな赤に変えてください。" },
-  { label: "服→青", color: "#3b7de2", prompt: "写っている人物が着ている服（衣服）の色だけを鮮やかな青に変えてください。" },
-  { label: "服→緑", color: "#3bbf5a", prompt: "写っている人物が着ている服（衣服）の色だけを深い緑に変えてください。" },
-  { label: "服→黒", color: "#333333", prompt: "写っている人物が着ている服（衣服）の色だけを黒に変えてください。" },
-  { label: "服→白", color: "#dddddd", prompt: "写っている人物が着ている服（衣服）の色だけを白に変えてください。" },
-  { label: "服→ピンク", color: "#e23b9b", prompt: "写っている人物が着ている服（衣服）の色だけをパステルピンクに変えてください。" },
-  // --- 柄物（模様を残して配色だけ変える）---
-  { label: "柄→青系", color: "#3b7de2", prompt: "服の柄（迷彩などの模様）の形・配置はそのまま保ち、配色だけを青系に変えてください。無地に塗りつぶさないでください。" },
-  { label: "柄→赤系", color: "#e23b3b", prompt: "服の柄（模様）の形・配置はそのまま保ち、配色だけを赤系に変えてください。無地に塗りつぶさないでください。" },
-  { label: "柄→紫系", color: "#9b3be2", prompt: "服の柄（模様）の形・配置はそのまま保ち、配色だけを紫系に変えてください。無地に塗りつぶさないでください。" },
-  { label: "柄→白黒", color: "#888888", prompt: "服の柄（模様）の形・配置はそのまま保ち、配色だけを白黒（モノトーン）に変えてください。無地に塗りつぶさないでください。" },
-  // --- その他 ---
-  { label: "モノクロ", color: "#888888", prompt: "画像全体をモノクロ（白黒）にしてください。" },
+// よく使う色のパレット（クリックでカラーコードを設定）
+const PALETTE = [
+  { name: "レッド", hex: "#E23B3B" },
+  { name: "ブルー", hex: "#3B7DE2" },
+  { name: "グリーン", hex: "#2FA84F" },
+  { name: "イエロー", hex: "#F0C020" },
+  { name: "オレンジ", hex: "#F07C1E" },
+  { name: "パープル", hex: "#8A3BE2" },
+  { name: "ピンク", hex: "#E23B9B" },
+  { name: "ネイビー", hex: "#1E2A55" },
+  { name: "ブラック", hex: "#222222" },
+  { name: "ホワイト", hex: "#F2F2F2" },
 ];
+
+// 対象ごとのプロンプト生成（正確な色指定つき）
+const TARGETS = {
+  item:    (c) => `画像の主役となる物の色を、${c} にできるだけ正確に変えてください。`,
+  clothes: (c) => `写っている人物が着ている服（衣服）の色だけを、${c} にできるだけ正確に変えてください。`,
+  pattern: (c) => `服の柄（迷彩などの模様）の形・配置・境界はそのまま保ち、配色を ${c} を基調に変えてください。無地に塗りつぶさないでください。`,
+};
 
 // ===== 状態 =====
 let selectedFile = null;   // { mimeType, base64, dataUrl }
+let target = "item";       // item | clothes | pattern
+let promptEdited = false;  // ユーザーが指示文を手動編集したか
 
 // ===== 要素 =====
 const $ = (id) => document.getElementById(id);
 const apiKeyInput = $("apiKey");
 const promptInput = $("prompt");
+const colorPicker = $("colorPicker");
+const hexInput = $("hexInput");
+const rgbLabel = $("rgbLabel");
 const convertBtn = $("convert");
 const beforeImg = $("beforeImg");
 const afterImg = $("afterImg");
@@ -57,19 +61,41 @@ function init() {
     apiKeyInput.value = fileKey; // config.js のキーを自動セット
   }
 
-  // プリセット生成
-  const presetWrap = $("presets");
-  COLOR_PRESETS.forEach((p) => {
-    const chip = document.createElement("button");
-    chip.className = "chip";
-    chip.innerHTML = `<span class="dot" style="background:${p.color}"></span>${p.label}`;
-    chip.addEventListener("click", () => {
-      document.querySelectorAll(".chip").forEach((c) => c.classList.remove("active"));
-      chip.classList.add("active");
-      promptInput.value = p.prompt;
-    });
-    presetWrap.appendChild(chip);
+  // パレットの色見本を生成
+  const swWrap = $("swatches");
+  PALETTE.forEach((p) => {
+    const sw = document.createElement("button");
+    sw.type = "button";
+    sw.className = "swatch";
+    sw.style.background = p.hex;
+    sw.title = `${p.name} ${p.hex}`;
+    sw.setAttribute("aria-label", `${p.name} ${p.hex}`);
+    sw.addEventListener("click", () => setColor(p.hex));
+    swWrap.appendChild(sw);
   });
+
+  // 対象（物/服/柄）の切り替え
+  document.querySelectorAll("#targetSeg .seg").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#targetSeg .seg").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      target = btn.dataset.target;
+      rebuildPrompt();
+    });
+  });
+
+  // カラーピッカー / カラーコード入力の連動
+  colorPicker.addEventListener("input", () => setColor(colorPicker.value));
+  hexInput.addEventListener("input", () => {
+    const hex = normalizeHex(hexInput.value);
+    if (hex) { colorPicker.value = hex; updateRgb(hex); rebuildPrompt(); }
+  });
+
+  // 指示文を手で編集したら自動生成を止める
+  promptInput.addEventListener("input", () => { promptEdited = true; });
+
+  // 初期プロンプト
+  setColor(colorPicker.value);
 
   $("saveKey").addEventListener("click", () => {
     localStorage.setItem("gemini_api_key", apiKeyInput.value.trim());
@@ -79,6 +105,44 @@ function init() {
   $("cameraInput").addEventListener("change", onFileSelected);
   $("galleryInput").addEventListener("change", onFileSelected);
   convertBtn.addEventListener("click", convert);
+}
+
+// ===== 色ユーティリティ =====
+// "#abc" / "abcdef" などを "#AABBCC" に正規化。不正なら null。
+function normalizeHex(v) {
+  let s = String(v).trim().replace(/^#/, "");
+  if (/^[0-9a-fA-F]{3}$/.test(s)) s = s.split("").map((c) => c + c).join("");
+  if (/^[0-9a-fA-F]{6}$/.test(s)) return "#" + s.toUpperCase();
+  return null;
+}
+function hexToRgb(hex) {
+  const h = normalizeHex(hex) || "#000000";
+  return {
+    r: parseInt(h.slice(1, 3), 16),
+    g: parseInt(h.slice(3, 5), 16),
+    b: parseInt(h.slice(5, 7), 16),
+  };
+}
+function updateRgb(hex) {
+  const { r, g, b } = hexToRgb(hex);
+  rgbLabel.textContent = `RGB ${r},${g},${b}`;
+}
+// カラーピッカー・テキスト・RGB表示・指示文をまとめて更新
+function setColor(hex) {
+  const norm = normalizeHex(hex);
+  if (!norm) return;
+  colorPicker.value = norm;
+  hexInput.value = norm;
+  updateRgb(norm);
+  rebuildPrompt();
+}
+// 対象＋カラーコードから指示文を自動生成（手動編集済みなら上書きしない）
+function rebuildPrompt() {
+  if (promptEdited) return;
+  const hex = normalizeHex(hexInput.value) || "#3B7DE2";
+  const { r, g, b } = hexToRgb(hex);
+  const colorDesc = `カラーコード ${hex}（RGB ${r}, ${g}, ${b}）`;
+  promptInput.value = TARGETS[target](colorDesc);
 }
 
 // ===== 画像選択 =====
@@ -141,8 +205,9 @@ async function convert() {
 
   const instruction =
     `${userPrompt} ` +
+    "指定されたカラーコード（16進カラー）の色に、色相・明度・彩度をできるだけ正確に一致させてください。" +
     "形・構図・背景・質感は保ったまま、指定された対象の色だけを自然に変更した画像を生成してください。" +
-    "迷彩などの模様・柄・プリント・ロゴがある場合は、その形・配置・境界をそのまま維持し、無地に塗りつぶさず、配色（色調）だけを変えてください。" +
+    "迷彩などの模様・柄・プリント・ロゴがある場合は、その形・配置・境界をそのまま維持し、無地に塗りつぶさず、配色（色調）だけを指定色に合わせて変えてください。" +
     "人物が写っている場合は、顔・肌の色・髪・体型・ポーズ・アクセサリー・背景は一切変えず、本人だと分かるように保ってください。" +
     "服のシワや陰影も自然に残してください。";
 
