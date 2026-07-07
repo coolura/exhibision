@@ -1,0 +1,9 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log
+
+# 秘密情報（万一ファイルにキーを置いた場合の保険）
+.env
+*.key
+secrets.*
