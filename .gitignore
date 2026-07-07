@@ -7,3 +7,6 @@ Thumbs.db
 .env
 *.key
 secrets.*
+
+# APIキー設定ファイル（公開リポジトリに載せない）
+config.js

@@ -34,9 +34,16 @@ const statusEl = $("status");
 init();
 
 function init() {
-  // 保存済みキー
+  // キーの読み込み優先順位: localStorage（保存済み） > config.js（window.GEMINI_API_KEY）
   const savedKey = localStorage.getItem("gemini_api_key");
-  if (savedKey) apiKeyInput.value = savedKey;
+  const fileKey = (typeof window !== "undefined" && window.GEMINI_API_KEY) || "";
+  const placeholder = fileKey === "ここにAPIキーを貼り付け" || fileKey === "あなたのAPIキー";
+
+  if (savedKey) {
+    apiKeyInput.value = savedKey;
+  } else if (fileKey && !placeholder) {
+    apiKeyInput.value = fileKey; // config.js のキーを自動セット
+  }
 
   // プリセット生成
   const presetWrap = $("presets");
