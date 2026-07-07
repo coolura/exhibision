@@ -128,6 +128,12 @@ async function convert() {
   const userPrompt = promptInput.value.trim() ||
     "対象の主役となる物の色を別の鮮やかな色に変えてください。";
 
+  // 服を脱がせる/裸にする等のリクエストは受け付けない（悪用防止）
+  const banned = /(脱が|脱げ|裸|全裸|裸体|ヌード|nude|naked|undress|nudify|topless|下着姿に|下着だけ|透け|see[- ]?through)/i;
+  if (banned.test(userPrompt)) {
+    return showStatus("error", "このリクエストは実行できません。色の変更にご利用ください。");
+  }
+
   const instruction =
     `${userPrompt} ` +
     "形・構図・背景・質感は保ったまま、指定された対象の色だけを自然に変更した画像を生成してください。" +
@@ -145,43 +151,43 @@ async function convert() {
       ],
     }],
     generationConfig: { responseModalities: ["IMAGE"] },
-    // 正当な服の色替え等が過剰にブロックされるのを緩和（調整可能なカテゴリのみ）
-    safetySettings: [
-      { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-      { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-      { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-      { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
-    ],
+    // 安全フィルタは既定のまま（無効化しない）
   };
 
   try {
-    // 安全フィルタのブロックは確率的なので、画像が返るまで最大2回試行
+    // 再試行は「一時的な通信/サーバ(5xx)エラー」のみ。
+    // 安全フィルタによるブロックは再試行せず、そのままユーザーに理由を表示する。
     const MAX_TRIES = 2;
-    let outImage = null;
-    let lastData = null;
+    let data = null;
 
     for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
-      if (attempt > 1) showStatus("loading", `もう一度試しています…（${attempt}/${MAX_TRIES}）`, true);
+      if (attempt > 1) showStatus("loading", `通信を再試行中…（${attempt}/${MAX_TRIES}）`, true);
 
-      const res = await fetch(ENDPOINT(MODEL, key), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      lastData = data;
-
-      if (!res.ok) {
-        const msg = (data && data.error && data.error.message) || `HTTP ${res.status}`;
-        throw new Error(msg); // キー/課金/リクエスト不正はリトライしても無意味
+      let res;
+      try {
+        res = await fetch(ENDPOINT(MODEL, key), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      } catch (netErr) {
+        if (attempt < MAX_TRIES) continue; // ネットワーク不通のみ再試行
+        throw new Error("通信に失敗しました: " + netErr.message);
       }
 
-      outImage = extractImage(data);
-      if (outImage) break;
+      data = await res.json();
+
+      if (res.status >= 500 && attempt < MAX_TRIES) continue; // サーバ側一時エラーは再試行
+      if (!res.ok) {
+        const msg = (data && data.error && data.error.message) || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      break; // 200 応答は成功・ブロックにかかわらず再試行しない
     }
 
+    const outImage = extractImage(data);
     if (!outImage) {
-      throw new Error("画像が返りませんでした。" + diagnose(lastData));
+      throw new Error("画像が返りませんでした。" + diagnose(data));
     }
 
     const outUrl = `data:${outImage.mimeType};base64,${outImage.data}`;
